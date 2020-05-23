@@ -1,11 +1,14 @@
+import array
 import binascii
+import struct
 
 from PyQt5 import QtCore
-from PyQt5.QtCore import pyqtSlot, QByteArray, QIODevice, Qt
+from PyQt5.QtCore import pyqtSlot, QByteArray, QIODevice, Qt, QTimer, QRegExp
+from PyQt5.QtGui import QIntValidator, QRegExpValidator
 from PyQt5.QtSerialPort import QSerialPort, QSerialPortInfo
 from PyQt5.QtWidgets import *
+import crcmod
 import pyqtgraph as pg
-import numpy as np
 import re
 import sys
 
@@ -16,10 +19,11 @@ stop_bite = ['OneStop', 'OneAndHalfStop', 'UnknownStopBits']
 
 
 class Hemodialysis(QMainWindow):
-    def __init__(self, parent=None):
-        super(Hemodialysis, self).__init__(parent)
+
+    def __init__(self):
+        super().__init__()
         self.setWindowTitle('血透仪')
-        self.width = 700
+        self.width = 1200
         self.height = int(0.618 * self.width)
         self.resize(self.width, self.height)
         self.refresh_button = QPushButton('刷新')
@@ -39,10 +43,27 @@ class Hemodialysis(QMainWindow):
         self.stop_bit_combobox.setCurrentIndex(0)  # 设置停止位默认选中值
         self.connect_button = QPushButton('打开串口')
         self.status_label = QLabel()
+        self.flow_button = QPushButton('设置流量')
+        self.flow_line_edit = QLineEdit('0')
+        # 限制输入为1-9999
+        flow_validator = QRegExpValidator()
+        flow_validator.setRegExp(QRegExp('[1-9]\\d{0,3}'))
+
+        self.flow_line_edit.setValidator(flow_validator)
+
 
         self.init_ui()
+
+
         self.create_items()
         self.create_signal_slot()
+
+        self.flow_data = []  # 流量数据
+        self.latest_flow_data = 0  # 最新的流量数据
+        self.serial_data_string = ""  # 所有的数据字符串
+        self.serial_data_cursor = 0  # 数据指针
+        self.serial_data_list = []  # 数据存储列表
+
 
     # 设置实例
     def create_items(self):
@@ -50,6 +71,9 @@ class Hemodialysis(QMainWindow):
         self.serial = QSerialPort(self)
         self.serial.readyRead.connect(self.receive_data)
         self.get_available_ports()
+        # self.timer = QTimer(self)  # 初始化一个定时器
+        # self.timer.timeout.connect(self.flow_ui)
+        # self.timer.start(50)  # 设置计时间隔 50ms 并启动
 
 
     def init_ui(self):
@@ -73,18 +97,18 @@ class Hemodialysis(QMainWindow):
         temperature_widget = QWidget()
         tab_widget.addTab(self.serial_widget, '串口显示')
         tab_widget.addTab(self.flow_widget, '流量')
+
+        self.flow_plot = self.flow_widget.addPlot()
+        # 设置画笔颜色宽度
+        self.green_pen = pg.mkPen((0,220,0), width=1.2,cosmetic=False,style=QtCore.Qt.SolidLine)
+        self.flow_plot.showGrid(x=True, y=True)  # 把X和Y的表格打开
+        self.flow_plot.setLabel('left', text='流量')  # 靠左
+        self.flow_plot.setLabel('bottom', text='时间', units='s')
+        self.flow_plot.setTitle('流量')  # 表格的名字
+        self.flow_plot.setRange(yRange=[0,20])
         tab_widget.addTab(temperature_widget, '温度')
-        self.flow_ui()
         self.serial_ui()
         return tab_widget
-
-    def flow_ui(self):
-        pg.setConfigOption('background', '#fffff')
-        pg.setConfigOption('foreground', 'd')
-        self.flow_widget.clear()
-        '''第一种绘图方式'''
-        print(np.random.normal(size=120))
-        self.flow_widget.addPlot(title="绘图单条线", y=np.random.normal(size=120), pen=pg.mkPen(color='b', width=2))
 
     def serial_ui(self):
         serial_box = QVBoxLayout()
@@ -136,6 +160,8 @@ class Hemodialysis(QMainWindow):
         grid.addWidget(QLabel('串口操作'), 6, 0)
         grid.addWidget(self.connect_button, 6, 1)
         grid.addWidget(self.status_label, 7, 0)
+        grid.addWidget(self.flow_line_edit,8,0)
+        grid.addWidget(self.flow_button,8,1)
         group_box.setLayout(grid)
 
         return group_box
@@ -145,6 +171,8 @@ class Hemodialysis(QMainWindow):
         self.refresh_button.clicked.connect(self.get_available_ports)
         self.connect_button.clicked.connect(self.connect_button_clicked)
         self.clear_show_button.clicked.connect(self.receive_browser.clear)
+        self.flow_button.clicked.connect(self.set_flow_data)
+
 
         # 返回当前系统可用的串口
         com_list = QSerialPortInfo.availablePorts()
@@ -174,7 +202,7 @@ class Hemodialysis(QMainWindow):
 
         serial_name = self.serial_combobox.currentText()
         if not serial_name:
-            QMessageBox.critical(self,'错误','没有选择串口')
+            QMessageBox.critical(self, '错误', '没有选择串口')
             return
         port = self.ports[serial_name]
         # 根据名字设置窗口
@@ -229,25 +257,49 @@ class Hemodialysis(QMainWindow):
         print('发送数据', text)
         self.serial.write(text)
 
+    def serial_send(self, data):
+        # 发送消息按钮
+        if not self.serial.isOpen():
+            print('串口未连接')
+            return
+        self.serial.write(data)
+
 
     # 串口接收数据
     def receive_data(self):
-        print('动否')
         if self.serial.bytesAvailable():
             # 当数据可读取时
             # 这里只是简答测试少量数据,如果数据量太多了此处readAll其实并没有读完
             # 需要自行设置粘包协议
 
             rx_data = self.serial.readAll()
-            if self.hex_show_check.isChecked():
+            # if self.hex_show_check.isChecked():
                 # 如果勾选了hex显示
-                rx_data = rx_data.toHex()
+            rx_data = rx_data.toHex()
             rx_data = rx_data.data()
+            self.serial_data_string = str(rx_data)
+            self.analysis()
+            for i in self.serial_data_list:
+                num = int(i[6:10], 16)
+                # 标识流量计数据
+                if i.startswith("aa"):
+                    if num == 65535:
+                        num = -1
+                    self.update_flow_data(num)
+                    print("流量计数据为:"+str(num))
+            self.serial_data_list = []
+            # 注意串口指针的位置
+            self.serial_data_cursor = 0
+
+
             try:
                 self.receive_browser.append('收到: ' + rx_data.decode('gb2312'))
+                print("收到的数据为:"+rx_data.decode('gb2312'))
+
             except:
                 # 解码失败
                 self.receive_browser.append('收到: ' + repr(rx_data))
+                print(repr(rx_data))
 
     def get_available_ports(self):
         self.serial_combobox.clear()
@@ -259,6 +311,74 @@ class Hemodialysis(QMainWindow):
             # 通过串口名字-->关联串口变量
             self.ports[info.portName()] = info
             self.serial_combobox.addItem(info.portName())
+
+    def analysis(self):
+        # 从字符串的第 serial_data_cursor 位开始寻找到末尾
+        new_data = self.serial_data_string[self.serial_data_cursor:]
+        # print newData
+        regex = re.compile(r'\w{2}0302\w{8}')
+
+        result = regex.search(new_data)
+        if result:
+            if self.data_test(result.group()):
+                self.serial_data_cursor += len(result.group())
+                print(result.group()+"Right Data")
+                self.serial_data_list.append(result.group())
+            else:
+                self.serial_data_cursor += 6  #6=\w{2}+0302
+                print(result.group() + "Wrong Data")
+                self.analysis()
+        else:
+            print('Find Failed', new_data)
+
+    # 数据校验
+    def data_test(self, data):
+        # 除去校验位的数据
+        data_temp = data[:-4]
+        if data[-4:] == self.crc_sum(data_temp):
+            return True
+        else:
+            return False
+
+    def crc_sum(self, data_temp):
+        temp = b''
+        while data_temp:
+            # 将不同的变量打包在一起，成为一个字节字符串
+            # bytes
+            temp += struct.pack('<H', int(data_temp[:2],16))[0:1]
+            data_temp = data_temp[2:]
+        # 进行CRC16校验
+        crc16 = crcmod.mkCrcFun(0x18005, rev=True, initCrc=0xFFFF, xorOut=0x0000)
+        # 以两位十六进制方式补齐，不显示OX
+        crc_l = '{:02x}'.format((crc16(temp) & 0XFF))
+        crc_h = '{:02x}'.format((crc16(temp) >> 8))
+        # print(crcL)
+        # print(crcH)
+        return crc_l + crc_h
+
+    # 更新流量数据
+    def update_flow_data(self, data):
+        self.flow_data.append(data)
+        self.flow_plot.setRange(xRange=[self.latest_flow_data-30, self.latest_flow_data])
+        self.latest_flow_data += 1
+        self.flow_plot.clear()
+        self.flow_plot.plot(pen=self.green_pen).setData(self.flow_data[:self.latest_flow_data])
+
+    # 设置目标流量
+    def set_flow_data(self):
+        print(self.flow_line_edit.text())
+        text = self.send_edit.toPlainText()
+        if not self.flow_line_edit.text():
+            QMessageBox.critical(self, '参数错误', '请检验是否输入参数')
+            return
+        #流量范围为两个字节
+        data = '100302'+ '{:04x}'.format(int(self.flow_line_edit.text()))
+        data = data + self.crc_sum(data)
+        data = bytes.fromhex(data)
+        # 发送数据
+        # 打印bytes可能会显示ascii对应的字符
+        self.serial_send(data)
+
 
 
 
