@@ -1,7 +1,8 @@
+import array
 import binascii
 
 from PyQt5 import QtCore
-from PyQt5.QtCore import pyqtSlot, QByteArray, QIODevice, Qt
+from PyQt5.QtCore import pyqtSlot, QByteArray, QIODevice, Qt, QTimer
 from PyQt5.QtSerialPort import QSerialPort, QSerialPortInfo
 from PyQt5.QtWidgets import *
 import pyqtgraph as pg
@@ -16,8 +17,9 @@ stop_bite = ['OneStop', 'OneAndHalfStop', 'UnknownStopBits']
 
 
 class Hemodialysis(QMainWindow):
-    def __init__(self, parent=None):
-        super(Hemodialysis, self).__init__(parent)
+
+    def __init__(self):
+        super().__init__()
         self.setWindowTitle('血透仪')
         self.width = 700
         self.height = int(0.618 * self.width)
@@ -39,10 +41,18 @@ class Hemodialysis(QMainWindow):
         self.stop_bit_combobox.setCurrentIndex(0)  # 设置停止位默认选中值
         self.connect_button = QPushButton('打开串口')
         self.status_label = QLabel()
+        self.flow_button = QPushButton("流量数据")
+
 
         self.init_ui()
+
+
         self.create_items()
         self.create_signal_slot()
+
+        self.flow_data = [] # 流量数据
+        self.lastest_flow_data = 0 # 最新的流量数据
+        self.stop_update_flow_data = 1 # 更新流量数据暂停标志
 
     # 设置实例
     def create_items(self):
@@ -50,6 +60,9 @@ class Hemodialysis(QMainWindow):
         self.serial = QSerialPort(self)
         self.serial.readyRead.connect(self.receive_data)
         self.get_available_ports()
+        self.timer = QTimer(self)  # 初始化一个定时器
+        self.timer.timeout.connect(self.flow_ui)
+        self.timer.start(50)  # 设置计时间隔 50ms 并启动
 
 
     def init_ui(self):
@@ -73,19 +86,30 @@ class Hemodialysis(QMainWindow):
         temperature_widget = QWidget()
         tab_widget.addTab(self.serial_widget, '串口显示')
         tab_widget.addTab(self.flow_widget, '流量')
+        self.idx = 0
+        self.data = array.array('d')  # 可动态改变数组的大小,double型数组
+        self.historyLength = 100  # 横坐标长度
+        p = self.flow_widget.addPlot()
+        p.showGrid(x=True, y=True)  # 把X和Y的表格打开
+        p.setRange(xRange=[0, self.historyLength], yRange=[-1.2, 1.2], padding=0)
+        p.setLabel(axis='left', text='y / V')  # 靠左
+        p.setLabel(axis='bottom', text='x / point')
+        p.setTitle('y = sin(x)')  # 表格的名字
+        self.curve = p.plot()  # 绘制一个图形
         tab_widget.addTab(temperature_widget, '温度')
-        self.flow_ui()
         self.serial_ui()
         return tab_widget
 
     def flow_ui(self):
-        pg.setConfigOption('background', '#fffff')
-        pg.setConfigOption('foreground', 'd')
-        self.flow_widget.clear()
-        '''第一种绘图方式'''
-        print(np.random.normal(size=120))
-        self.flow_widget.addPlot(title="绘图单条线", y=np.random.normal(size=120), pen=pg.mkPen(color='b', width=2))
-
+        self.idx
+        tmp = np.sin(np.pi / 50 * self.idx)
+        if len(self.data) < self.historyLength * 5:
+            self.data.append(tmp)
+        else:
+            self.data[:-1] = self.data[1:]  # 前移
+            self.data[-1] = tmp
+        self.curve.setData(self.data)
+        self.idx += 1
     def serial_ui(self):
         serial_box = QVBoxLayout()
         receive_box = QHBoxLayout()
@@ -136,6 +160,7 @@ class Hemodialysis(QMainWindow):
         grid.addWidget(QLabel('串口操作'), 6, 0)
         grid.addWidget(self.connect_button, 6, 1)
         grid.addWidget(self.status_label, 7, 0)
+        grid.addWidget(self.flow_button,8,0)
         group_box.setLayout(grid)
 
         return group_box
@@ -145,6 +170,7 @@ class Hemodialysis(QMainWindow):
         self.refresh_button.clicked.connect(self.get_available_ports)
         self.connect_button.clicked.connect(self.connect_button_clicked)
         self.clear_show_button.clicked.connect(self.receive_browser.clear)
+        self.flow_button.clicked.connect(self.request_flow_data)
 
         # 返回当前系统可用的串口
         com_list = QSerialPortInfo.availablePorts()
@@ -232,7 +258,6 @@ class Hemodialysis(QMainWindow):
 
     # 串口接收数据
     def receive_data(self):
-        print('动否')
         if self.serial.bytesAvailable():
             # 当数据可读取时
             # 这里只是简答测试少量数据,如果数据量太多了此处readAll其实并没有读完
@@ -259,6 +284,12 @@ class Hemodialysis(QMainWindow):
             # 通过串口名字-->关联串口变量
             self.ports[info.portName()] = info
             self.serial_combobox.addItem(info.portName())
+    def request_flow_data(self):
+        '''发送流量请求数据'''
+
+    def rece_serial_data(self,data):
+        print(data)
+
 
 
 
