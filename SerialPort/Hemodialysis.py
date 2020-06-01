@@ -94,7 +94,8 @@ class Hemodialysis(QMainWindow):
         tab_widget = QTabWidget()
         self.flow_widget = pg.GraphicsLayoutWidget()
         self.serial_widget = QWidget()
-        temperature_widget = QWidget()
+        self.vein_artery_widget = QWidget() #动静脉压力
+        self.pressure_widet = QWidget() # 透析液压力
         tab_widget.addTab(self.serial_widget, '串口显示')
         tab_widget.addTab(self.flow_widget, '流量')
 
@@ -102,11 +103,12 @@ class Hemodialysis(QMainWindow):
         # 设置画笔颜色宽度
         self.green_pen = pg.mkPen((0,220,0), width=1.2,cosmetic=False,style=QtCore.Qt.SolidLine)
         self.flow_plot.showGrid(x=True, y=True)  # 把X和Y的表格打开
-        self.flow_plot.setLabel('left', text='流量')  # 靠左
+        self.flow_plot.setLabel('left', text='蠕动泵流量')  # 靠左
         self.flow_plot.setLabel('bottom', text='时间', units='s')
         self.flow_plot.setTitle('流量')  # 表格的名字
-        self.flow_plot.setRange(yRange=[0,20])
-        tab_widget.addTab(temperature_widget, '温度')
+        self.flow_plot.setRange(yRange=[0,500])
+        tab_widget.addTab(self.vein_artery_widget, '脉压')
+        tab_widget.addTab(self.pressure_widet, '压力')
         self.serial_ui()
         return tab_widget
 
@@ -378,9 +380,6 @@ class Hemodialysis(QMainWindow):
         # 发送数据
         # 打印bytes可能会显示ascii对应的字符
         self.serial_send(data)
-
-
-
 
 
 if __name__ == '__main__':
