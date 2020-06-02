@@ -379,10 +379,6 @@ class Hemodialysis(QMainWindow):
         # 打印bytes可能会显示ascii对应的字符
         self.serial_send(data)
 
-
-
-
-
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     ui = Hemodialysis()
