@@ -1,10 +1,8 @@
-import array
-import binascii
 import struct
 
 from PyQt5 import QtCore
 from PyQt5.QtCore import pyqtSlot, QByteArray, QIODevice, Qt, QTimer, QRegExp
-from PyQt5.QtGui import QIntValidator, QRegExpValidator
+from PyQt5.QtGui import QRegExpValidator
 from PyQt5.QtSerialPort import QSerialPort, QSerialPortInfo
 from PyQt5.QtWidgets import *
 import crcmod
@@ -59,7 +57,12 @@ class Hemodialysis(QMainWindow):
         self.create_signal_slot()
 
         self.flow_data = []  # 流量数据
+        self.artery_data = [] # 动脉压数据
+        self.fresh_data = [] # 新鲜液压力
+
         self.latest_flow_data = 0  # 最新的流量数据
+        self.latest_artery_data = 0  # 最新的动脉压数据
+        self.latest_fresh_data = 0 # 最新的新鲜液侧压力数据
         self.serial_data_string = ""  # 所有的数据字符串
         self.serial_data_cursor = 0  # 数据指针
         self.serial_data_list = []  # 数据存储列表
@@ -93,20 +96,37 @@ class Hemodialysis(QMainWindow):
     def create_right_widget(self):
         tab_widget = QTabWidget()
         self.flow_widget = pg.GraphicsLayoutWidget()
+        self.vein_artery_widget = pg.GraphicsLayoutWidget()
+        self.pressure_widet = pg.GraphicsLayoutWidget()
         self.serial_widget = QWidget()
-        temperature_widget = QWidget()
         tab_widget.addTab(self.serial_widget, '串口显示')
         tab_widget.addTab(self.flow_widget, '流量')
+        tab_widget.addTab(self.vein_artery_widget, '脉压')
+        tab_widget.addTab(self.pressure_widet, '压力')
 
         self.flow_plot = self.flow_widget.addPlot()
+        self.vein_artery_plot = self.vein_artery_widget.addPlot()
+        self.pressure_plot = self.pressure_widet.addPlot()
         # 设置画笔颜色宽度
         self.green_pen = pg.mkPen((0,220,0), width=1.2,cosmetic=False,style=QtCore.Qt.SolidLine)
         self.flow_plot.showGrid(x=True, y=True)  # 把X和Y的表格打开
-        self.flow_plot.setLabel('left', text='流量')  # 靠左
+        self.flow_plot.setLabel('left', text='ml/min')  # 靠左
         self.flow_plot.setLabel('bottom', text='时间', units='s')
-        self.flow_plot.setTitle('流量')  # 表格的名字
-        self.flow_plot.setRange(yRange=[0,20])
-        tab_widget.addTab(temperature_widget, '温度')
+        self.flow_plot.setTitle('蠕动泵流量')  # 表格的名字
+        self.flow_plot.setRange(yRange=[0,500])
+        # 动静脉压力的图表
+        self.vein_artery_plot.showGrid(x=True, y=True)  # 把X和Y的表格打开
+        self.vein_artery_plot.setLabel('left', text='mmHg')  # 靠左
+        self.vein_artery_plot.setLabel('bottom', text='时间', units='s')
+        self.vein_artery_plot.setTitle('动静脉压力')  # 表格的名字
+        self.vein_artery_plot.setRange(yRange=[0,500])
+         # 透析液压力状况的图表
+        self.pressure_plot.showGrid(x=True, y=True)  # 把X和Y的表格打开
+        self.pressure_plot.setLabel('left', text='mmHg')  # 靠左
+        self.pressure_plot.setLabel('bottom', text='时间', units='s')
+        self.pressure_plot.setTitle('透析液压力')  # 表格的名字
+        self.pressure_plot.setRange(yRange=[0,500])
+
         self.serial_ui()
         return tab_widget
 
@@ -287,11 +307,20 @@ class Hemodialysis(QMainWindow):
                         num = -1
                     self.update_flow_data(num)
                     print("流量计数据为:"+str(num))
+                elif i.startswith("ab"):
+                    if num == 65535:
+                        num = -1
+                    self.update_artery_data(num)
+                    print("动脉压数据为:"+str(num))
+                elif i.startswith("ad"):
+                    if num == 65535:
+                        num = -1
+                    self.update_fresh_data(num)
+                    print("动脉压数据为:"+str(num))
+
             self.serial_data_list = []
             # 注意串口指针的位置
             self.serial_data_cursor = 0
-
-
             try:
                 self.receive_browser.append('收到: ' + rx_data.decode('gb2312'))
                 print("收到的数据为:"+rx_data.decode('gb2312'))
@@ -317,19 +346,21 @@ class Hemodialysis(QMainWindow):
         new_data = self.serial_data_string[self.serial_data_cursor:]
         # print newData
         regex = re.compile(r'\w{2}0302\w{8}')
+        result_list = regex.findall(new_data)
+        # 如果没找到匹配字符串直接返回
+        if len(result_list) == 0:
+            print("Find Failed: " + new_data)
+            return
+        for i in range(len(result_list)):
 
-        result = regex.search(new_data)
-        if result:
-            if self.data_test(result.group()):
-                self.serial_data_cursor += len(result.group())
-                print(result.group()+"Right Data")
-                self.serial_data_list.append(result.group())
+            if self.data_test(result_list[i]):
+                self.serial_data_cursor += len(result_list[i])
+                print(result_list[i]+"Right Data")
+                self.serial_data_list.append(result_list[i])
             else:
                 self.serial_data_cursor += 6  #6=\w{2}+0302
-                print(result.group() + "Wrong Data")
+                print(result_list[i] + "Wrong Data")
                 self.analysis()
-        else:
-            print('Find Failed', new_data)
 
     # 数据校验
     def data_test(self, data):
@@ -363,6 +394,23 @@ class Hemodialysis(QMainWindow):
         self.latest_flow_data += 1
         self.flow_plot.clear()
         self.flow_plot.plot(pen=self.green_pen).setData(self.flow_data[:self.latest_flow_data])
+
+    # 更新动脉压数据
+    def update_artery_data(self, data):
+        self.artery_data.append(data)
+        self.vein_artery_plot.setRange(xRange=[self.latest_artery_data-30, self.latest_artery_data])
+        self.latest_artery_data += 1
+        self.vein_artery_plot.clear()
+        self.vein_artery_plot.plot(pen=self.green_pen).setData(self.artery_data[:self.latest_artery_data])
+
+    # 更新新鲜液压力
+    def update_fresh_data(self, data):
+        self.fresh_data.append(data)
+        self.pressure_plot.setRange(xRange=[self.latest_fresh_data - 30, self.latest_fresh_data])
+        self.latest_fresh_data += 1
+        self.pressure_plot.clear()
+        self.pressure_plot.plot(pen=self.green_pen).setData(self.fresh_data[:self.latest_fresh_data])
+
 
     # 设置目标流量
     def set_flow_data(self):
