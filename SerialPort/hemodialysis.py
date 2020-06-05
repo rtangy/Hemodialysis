@@ -58,11 +58,15 @@ class Hemodialysis(QMainWindow):
 
         self.flow_data = []  # 流量数据
         self.artery_data = [] # 动脉压数据
+        self.vein_data = [] # 静脉压数据
         self.fresh_data = [] # 新鲜液压力
+        self.trash_data = []  # 废弃液压力数据
 
         self.latest_flow_data = 0  # 最新的流量数据
         self.latest_artery_data = 0  # 最新的动脉压数据
+        self.latest_vein_data = 0  # 最新的静脉压数据
         self.latest_fresh_data = 0 # 最新的新鲜液侧压力数据
+        self.latest_trash_data = 0  # 最新的废弃液侧数据
         self.serial_data_string = ""  # 所有的数据字符串
         self.serial_data_cursor = 0  # 数据指针
         self.serial_data_list = []  # 数据存储列表
@@ -101,6 +105,8 @@ class Hemodialysis(QMainWindow):
 
     def create_right_widget(self):
         tab_widget = QTabWidget()
+        pg.setConfigOption('background','w')
+        pg.setConfigOption('foreground', 'k')
         self.flow_widget = pg.GraphicsLayoutWidget()
         self.vein_artery_widget = pg.GraphicsLayoutWidget()
         self.pressure_widet = pg.GraphicsLayoutWidget()
@@ -111,6 +117,7 @@ class Hemodialysis(QMainWindow):
         tab_widget.addTab(self.pressure_widet, '压力')
 
         self.flow_plot = self.flow_widget.addPlot()
+        # self.flow_plot.setRange(xRange=[0,50])
         self.vein_artery_plot = self.vein_artery_widget.addPlot()
         self.dialysis_plot = self.pressure_widet.addPlot()
         # 设置画笔颜色宽度
@@ -120,8 +127,7 @@ class Hemodialysis(QMainWindow):
         self.flow_plot.setLabel('left', text='ml/min')  # 靠左
         self.flow_plot.setLabel('bottom', text='时间', units='s')
         self.flow_plot.setTitle('蠕动泵流量')  # 表格的名字
-        self.flow_plot.setRange(xRange=[0,300])
-        self.flow_plot.setRange(yRange=[0,500])
+        self.flow_plot.setRange(yRange=[0, 500])
         # 动静脉压力的图表
         self.vein_artery_plot.addLegend(size=(100, 50), offset=(0, 0))  # 设置图形的图例
         self.vein_artery_plot.showGrid(x=True, y=True,alpha = 0.5)  # 把X和Y的表格打开
@@ -129,7 +135,7 @@ class Hemodialysis(QMainWindow):
         self.vein_artery_plot.setLabel('bottom', text='时间', units='s')
         self.vein_artery_plot.setTitle('动静脉压力')  # 表格的名字
         self.vein_artery_plot.setRange(yRange=[0,500])
-        self.arterial_pressure_curve = self.vein_artery_plot.plot(pen='k', name='动脉压', symbol='o', symbolSize=4, symbolPen=(0, 0, 0),
+        self.arterial_pressure_curve = self.vein_artery_plot.plot(pen='b', name='动脉压', symbol='o', symbolSize=4, symbolPen=(0, 0, 0),
                                     symbolBrush=(0, 0, 0))
         self.venous_pressure_curve = self.vein_artery_plot.plot(pen='r', name='静脉压', symbol='t', symbolSize=4, symbolPen=(255, 0, 0),
                                     symbolBrush=(255, 0, 0))
@@ -142,9 +148,9 @@ class Hemodialysis(QMainWindow):
         self.dialysis_plot.setTitle('透析液压力')  # 表格的名字
         self.dialysis_plot.setRange(yRange=[0, 500])
 
-        self.curve_1 = self.dialysis_plot.plot(pen='b', name='新鲜液', symbol='o', symbolSize=4, symbolPen=(0, 0, 0),
+        self.fresh_pressure_curve = self.dialysis_plot.plot(pen='b', name='新鲜液', symbol='o', symbolSize=4, symbolPen=(0, 0, 0),
                                     symbolBrush=(0, 0, 0))
-        self.curve_2 = self.dialysis_plot.plot(pen='g', name='废弃液', symbol='t', symbolSize=4, symbolPen=(255, 0, 0),
+        self.trash_pressure_curve = self.dialysis_plot.plot(pen='g', name='废弃液', symbol='t', symbolSize=4, symbolPen=(255, 0, 0),
                                     symbolBrush=(255, 0, 0))
 
 
@@ -352,13 +358,19 @@ class Hemodialysis(QMainWindow):
                 elif i.startswith("ac"):
                     if num == 65535:
                         num = -1
-                    self.update_update_vein_data(num)
+                    self.update_vein_data(num)
                     print("静脉压数据为:" + str(num))
                 elif i.startswith("ad"):
                     if num == 65535:
                         num = -1
                     self.update_fresh_data(num)
-                    print("动脉压数据为:"+str(num))
+                    print("新鲜透析液压力为:"+str(num))
+                elif i.startswith("ae"):
+                    if num == 65535:
+                        num = -1
+                    self.update_trash_data(num)
+                    print("废弃液压力为:" + str(num))
+
 
             self.serial_data_list = []
             # 注意串口指针的位置
@@ -432,34 +444,50 @@ class Hemodialysis(QMainWindow):
     # 更新流量数据
     def update_flow_data(self, data):
         self.flow_data.append(data)
-        self.flow_plot.setRange(xRange=[self.latest_flow_data-30, self.latest_flow_data])
         self.latest_flow_data += 1
+        if self.latest_flow_data % 100 == 0:
+            self.flow_plot.setXRange(min=self.latest_flow_data - 50,max=self.latest_flow_data + 50)
+            self.flow_plot.setYRange(min=data - 50,max=data + 50)
         self.flow_plot.clear()
         self.flow_plot.plot(pen=self.green_pen).setData(self.flow_data[:self.latest_flow_data])
 
     # 更新动脉压数据
     def update_artery_data(self, data):
         self.artery_data.append(data)
-        self.vein_artery_plot.setRange(xRange=[self.latest_artery_data-30, self.latest_artery_data])
         self.latest_artery_data += 1
+        # 每100次，使图像居中显示
+        if self.latest_artery_data % 100 == 0:
+            self.flow_plot.setXRange(min=self.latest_artery_data - 50,max=self.latest_artery_data + 50)
+            self.flow_plot.setYRange(min=data - 50,max=data + 50)
         self.arterial_pressure_curve.clear()
         self.arterial_pressure_curve.setData(self.artery_data[:self.latest_artery_data])
 
     # 更新静脉压数据
     def update_vein_data(self, data):
-        self.artery_data.append(data)
-        self.vein_artery_plot.setRange(xRange=[self.latest_artery_data - 30, self.latest_artery_data])
-        self.latest_artery_data += 1
+        self.vein_data.append(data)
+        self.latest_vein_data += 1
+        if self.latest_vein_data % 100 == 0:
+            self.vein_artery_plot.setXRange(min=self.latest_vein_data - 50,max=self.latest_vein_data + 50)
+            self.vein_artery_plot.setYRange(min=data - 50,max=data + 50)
         self.venous_pressure_curve.clear()
-        self.venous_pressure_curve.setData(self.artery_data[:self.latest_artery_data])
+        self.venous_pressure_curve.setData(self.vein_data[:self.latest_vein_data])
 
     # 更新新鲜液压力
     def update_fresh_data(self, data):
         self.fresh_data.append(data)
-        self.dialysis_plot.setRange(xRange=[self.latest_fresh_data - 30, self.latest_fresh_data])
         self.latest_fresh_data += 1
-        self.dialysis_plot.clear()
-        self.dialysis_plot.plot(pen=self.green_pen).setData(self.fresh_data[:self.latest_fresh_data])
+        if self.latest_fresh_data % 100 == 0:
+            self.dialysis_plot.setXRange(min=self.latest_vein_data - 50,max=self.latest_vein_data + 50)
+            self.dialysis_plot.setYRange(min=data - 100,max=data + 100)
+        self.fresh_pressure_curve.clear()
+        self.fresh_pressure_curve.setData(self.fresh_data[:self.latest_fresh_data])
+
+    # 更新废弃液压力
+    def update_trash_data(self, data):
+        self.trash_data.append(data)
+        self.latest_trash_data += 1
+        self.trash_pressure_curve.clear()
+        self.trash_pressure_curve.setData(self.trash_data[:self.latest_trash_data])
 
 
     # 设置目标流量

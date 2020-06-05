@@ -3,7 +3,7 @@
 block_cipher = None
 
 
-a = Analysis(['Hemodialysis.py'],
+a = Analysis(['hemodialysis.py'],
              pathex=['C:\\Software\\PyCharmProject\\Hemodialysis\\SerialPort'],
              binaries=[],
              datas=[],
@@ -23,7 +23,7 @@ exe = EXE(pyz,
           a.zipfiles,
           a.datas,
           [],
-          name='Hemodialysis',
+          name='hemodialysis',
           debug=False,
           bootloader_ignore_signals=False,
           strip=False,
